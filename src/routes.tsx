@@ -8,6 +8,7 @@ import AuthRoutes from './modules/auth/routes';
 import { IUser } from './modules/auth/types';
 import CompaniesRoutes from './modules/companies/routes';
 import CustomersRoutes from './modules/customers/routes';
+import TestRoutes from './modules/dealCalender/routes';
 import DealsRoutes from './modules/deals/routes';
 import EngageRoutes from './modules/engage/routes';
 import FormRoutes from './modules/forms/routes';
@@ -37,6 +38,7 @@ const renderRoutes = currentUser => {
           <TagsRoutes />
           <NotificationRoutes />
           <DealsRoutes />
+          <TestRoutes />
         </MainWrapper>
       </MainLayout>
     );
