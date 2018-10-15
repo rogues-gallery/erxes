@@ -9,7 +9,7 @@ import { mutations, queries } from '../graphql';
 
 type SaveUserProfileArgs = {
   usersEdit: (
-    params: { variables: { _id: string; doc: IUserDoc } }
+    params: { variables: { _id: string } & IUserDoc }
   ) => Promise<any>;
   usersEditProfile: (params: { variables: IUserDoc }) => Promise<any>;
 };
@@ -42,7 +42,7 @@ const UserDetailsContainer = (props: Props & SaveUserProfileArgs) => {
     callback: (e: string) => void
   ) => {
     usersEdit({
-      variables: { _id, doc }
+      variables: { _id, ...doc }
     })
       .then(e => {
         Alert.success('Successfully saved');

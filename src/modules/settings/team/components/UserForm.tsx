@@ -1,19 +1,30 @@
 import { UserCommonInfos } from 'modules/auth/components';
+import { IUser, IUserDoc } from 'modules/auth/types';
 import {
+  Button,
   ControlLabel,
   FormControl,
   FormGroup
 } from 'modules/common/components';
-import { ColumnTitle } from 'modules/common/styles/main';
+import { ColumnTitle, ModalFooter } from 'modules/common/styles/main';
 import { __ } from 'modules/common/utils';
 import * as React from 'react';
 import Select from 'react-select-plus';
 import { IChannel } from '../../channels/types';
-import { Form as CommonForm } from '../../common/components';
-import { ICommonFormProps } from '../../common/types';
 
 type Props = {
   channels: IChannel[];
+  object: IUser;
+  save: (
+    object: any,
+    params: {
+      password: string;
+      channelIds: string[];
+      passwordConfirmation: string;
+    } & IUserDoc,
+    callback: () => void
+  ) => void;
+  closeModal: () => void;
 };
 
 type State = {
@@ -21,7 +32,7 @@ type State = {
   selectedChannels: IChannel[];
 };
 
-class UserForm extends React.Component<Props & ICommonFormProps, State> {
+class UserForm extends React.Component<Props, State> {
   constructor(props) {
     super(props);
 
@@ -29,7 +40,7 @@ class UserForm extends React.Component<Props & ICommonFormProps, State> {
     this.generateChannelsParams = this.generateChannelsParams.bind(this);
     this.collectValues = this.collectValues.bind(this);
     this.renderContent = this.renderContent.bind(this);
-    this.generateDoc = this.generateDoc.bind(this);
+    this.save = this.save.bind(this);
 
     const user = props.object || { details: {} };
     const defaultAvatar = '/images/avatar-colored.svg';
@@ -81,32 +92,39 @@ class UserForm extends React.Component<Props & ICommonFormProps, State> {
     return (document.getElementById(id) as HTMLInputElement).value;
   }
 
-  generateDoc() {
-    const doc = {
-      username: this.getInputElementValue('username'),
-      email: this.getInputElementValue('email'),
-      role: this.getInputElementValue('role'),
-      details: {
-        avatar: this.state.avatar,
-        shortName: this.getInputElementValue('shortName'),
-        position: this.getInputElementValue('position'),
-        fullName: this.getInputElementValue('fullName'),
-        location: this.getInputElementValue('user-location'),
-        description: this.getInputElementValue('description')
+  save(e) {
+    e.preventDefault();
+
+    this.props.save(
+      this.props.object._id,
+      {
+        username: this.getInputElementValue('username'),
+        email: this.getInputElementValue('email'),
+        role: this.getInputElementValue('role'),
+        details: {
+          avatar: this.state.avatar,
+          shortName: this.getInputElementValue('shortName'),
+          position: this.getInputElementValue('position'),
+          fullName: this.getInputElementValue('fullName'),
+          location: this.getInputElementValue('user-location'),
+          description: this.getInputElementValue('description')
+        },
+        channelIds: this.collectValues(this.state.selectedChannels),
+        password: this.getInputElementValue('password'),
+        passwordConfirmation: this.getInputElementValue(
+          'password-confirmation'
+        ),
+        links: {
+          linkedIn: this.getInputElementValue('linkedin'),
+          twitter: this.getInputElementValue('twitter'),
+          facebook: this.getInputElementValue('facebook'),
+          youtube: this.getInputElementValue('youtube'),
+          github: this.getInputElementValue('github'),
+          website: this.getInputElementValue('website')
+        }
       },
-      channelIds: this.collectValues(this.state.selectedChannels),
-      password: this.getInputElementValue('password'),
-      passwordConfirmation: this.getInputElementValue('password-confirmation'),
-      links: {
-        linkedIn: this.getInputElementValue('linkedin'),
-        twitter: this.getInputElementValue('twitter'),
-        facebook: this.getInputElementValue('facebook'),
-        youtube: this.getInputElementValue('youtube'),
-        github: this.getInputElementValue('github'),
-        website: this.getInputElementValue('website')
-      }
-    };
-    return { doc };
+      this.props.closeModal
+    );
   }
 
   renderContent() {
@@ -148,12 +166,31 @@ class UserForm extends React.Component<Props & ICommonFormProps, State> {
   }
 
   render() {
+    const saveButton = (
+      <Button btnStyle="success" icon="checked-1">
+        Save
+      </Button>
+    );
+
     return (
-      <CommonForm
-        {...this.props}
-        renderContent={this.renderContent}
-        generateDoc={this.generateDoc}
-      />
+      <form onSubmit={this.save}>
+        {this.renderContent()}
+
+        <ModalFooter>
+          <Button
+            btnStyle="simple"
+            type="button"
+            onClick={this.props.closeModal}
+            icon="cancel-1"
+          >
+            Cancel
+          </Button>
+
+          <Button btnStyle="success" type="submit" icon="checked-1">
+            Save
+          </Button>
+        </ModalFooter>
+      </form>
     );
   }
 }
