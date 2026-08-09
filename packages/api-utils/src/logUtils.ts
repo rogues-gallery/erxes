@@ -1,0 +1,364 @@
+import * as _ from "underscore";
+import redis from "./redis";
+import { IUserDocument } from "./types";
+import { isEnabled } from "./serviceDiscovery";
+import { sendMessage, sendRPCMessage } from "./messageBroker";
+
+export interface ILogDataParams {
+  type: string;
+  description?: string;
+  object: any;
+  newData?: object;
+  extraDesc?: object[];
+  updatedDocument?: any;
+  extraParams?: any;
+}
+
+interface ILogNameParams {
+  foreignKey: string;
+  prevList?: LogDesc[];
+  items: any[];
+}
+
+export interface IDescriptions {
+  description?: string;
+  extraDesc?: LogDesc[];
+}
+
+interface ILogParams extends ILogNameParams {
+  nameFields: string[];
+}
+
+interface INameLabel {
+  name: string;
+  label: string;
+}
+
+interface ISchemaMap {
+  name: string;
+  schemas: any[];
+}
+
+/**
+ * Finds name field from given collection
+ * @param params.foreignKey Name of id fields
+ * @param params.prevList Array to save found id with name
+ * @param params.nameFields List of values to be mapped to id field
+ * @param params.items Mongodb document list
+ */
+export const gatherNames = async (params: ILogParams): Promise<LogDesc[]> => {
+  const { foreignKey, prevList, nameFields = [], items = [] } = params;
+
+  let options: LogDesc[] = [];
+
+  if (prevList && prevList.length > 0) {
+    options = prevList;
+  }
+
+  if (!items.length) {
+    return options;
+  }
+
+  for (const item of items) {
+    if (item && item._id) {
+      let name: string = "";
+
+      for (const n of nameFields) {
+        // first level field
+        if (item[n]) {
+          name = item[n];
+        }
+
+        // TODO: properly fill nested object fields
+      }
+
+      options.push({ [foreignKey]: item._id, name });
+    }
+  }
+
+  return options;
+};
+
+export const gatherUsernames = async (
+  params: ILogNameParams
+): Promise<LogDesc[]> => {
+  const { foreignKey, prevList, items = [] } = params;
+
+  return gatherNames({
+    foreignKey,
+    prevList,
+    nameFields: ["email", "username"],
+    items
+  });
+};
+
+interface IFinalLogParams extends ILogDataParams {
+  action: string;
+}
+
+export interface ILogOptions {
+  sendTriggerAutomationTRPC?: boolean;
+}
+
+export const LOG_ACTIONS = {
+  CREATE: "create",
+  UPDATE: "update",
+  DELETE: "delete"
+};
+
+export type LogDesc = {
+  [key: string]: any;
+} & { name: any };
+
+export const sendAutomationTrigger = async (
+  subdomain: string,
+  data: {
+    type: string;
+    targets: any[];
+    [key: string]: any;
+  },
+  options?: ILogOptions
+) => {
+  const isAutomationsAvailable = await isEnabled("automations");
+
+  if (!isAutomationsAvailable) {
+    return;
+  }
+
+  if (options?.sendTriggerAutomationTRPC) {
+    return sendRPCMessage("automations:trigger", {
+      subdomain,
+      data
+    });
+  }
+
+  return sendMessage("automations:trigger", {
+    subdomain,
+    data
+  });
+};
+
+export const putCreateLog = async (
+  subdomain: string,
+  params: ILogDataParams,
+  user: IUserDocument,
+  options?: ILogOptions
+) => {
+  sendAutomationTrigger(
+    subdomain,
+    {
+      type: `${params.type}`,
+      targets: [params.object]
+    },
+    options
+  );
+
+  const isWebhooksAvailable = await isEnabled("webhooks");
+
+  if (isWebhooksAvailable) {
+    sendMessage("webhooks:send", {
+      subdomain,
+      data: {
+        action: LOG_ACTIONS.CREATE,
+        type: params.type,
+        params
+      }
+    });
+  }
+
+  return putLog(subdomain, { ...params, action: LOG_ACTIONS.CREATE }, user);
+};
+
+/**
+ * Prepares a create log request to log server
+ * @param params Log document params
+ * @param user User information from mutation context
+ */
+export const putUpdateLog = async (
+  subdomain: string,
+  params: ILogDataParams,
+  user: IUserDocument,
+  options?: ILogOptions
+) => {
+  await sendAutomationTrigger(
+    subdomain,
+    {
+      type: `${params.type}`,
+      targets: [params.updatedDocument]
+    },
+    options
+  );
+
+  const isWebhooksAvailable = await isEnabled("webhooks");
+
+  if (isWebhooksAvailable) {
+    sendMessage("webhooks:send", {
+      subdomain,
+      data: {
+        action: LOG_ACTIONS.UPDATE,
+        type: params.type,
+        params
+      }
+    });
+  }
+
+  return putLog(subdomain, { ...params, action: LOG_ACTIONS.UPDATE }, user);
+};
+
+/**
+ * Prepares a create log request to log server
+ * @param params Log document params
+ * @param user User information from mutation context
+ */
+export const putDeleteLog = async (
+  subdomain: string,
+  params: ILogDataParams,
+  user: IUserDocument
+) => {
+  const isWebhooksAvailable = await isEnabled("webhooks");
+
+  if (isWebhooksAvailable) {
+    sendMessage("webhooks:send", {
+      subdomain,
+      data: {
+        action: LOG_ACTIONS.DELETE,
+        type: params.type,
+        params
+      }
+    });
+  }
+
+  return putLog(subdomain, { ...params, action: LOG_ACTIONS.DELETE }, user);
+};
+
+const putLog = async (
+  subdomain: string,
+  params: IFinalLogParams,
+  user: IUserDocument
+) => {
+  const value = await redis.get("afterMutations");
+  const afterMutations = JSON.parse(value || "{}");
+
+  if (
+    afterMutations[params.type] &&
+    afterMutations[params.type][params.action] &&
+    afterMutations[params.type][params.action].length
+  ) {
+    for (const service of afterMutations[params.type][params.action]) {
+      await sendMessage(`${service}:afterMutation`, {
+        subdomain,
+        data: {
+          ...params,
+          object: params.object,
+          newData: params.newData,
+          extraDesc: params.extraDesc,
+          user
+        }
+      });
+    }
+  }
+
+  return sendMessage("putLog", {
+    subdomain,
+    data: {
+      ...params,
+      createdBy: user._id,
+      unicode: user.username || user.email || user._id,
+      object: JSON.stringify(params.object),
+      newData: JSON.stringify(params.newData),
+      extraDesc: JSON.stringify(params.extraDesc)
+    }
+  });
+};
+
+export interface IActivityLogParams {
+  action: string;
+  data: any;
+  automations?: any;
+}
+
+export const putActivityLog = async (
+  subdomain: string,
+  params: IActivityLogParams,
+  options?: ILogOptions
+) => {
+  const { data } = params;
+
+  try {
+    const target = data?.target || data?.item;
+
+    if (target) {
+      await sendAutomationTrigger(
+        subdomain,
+        {
+          type: `${data.contentType}`,
+          targets: [target],
+          ...(data.automations || {})
+        },
+        options
+      );
+    }
+
+    return sendMessage('putActivityLog', {
+      data: params,
+      subdomain,
+    });
+  } catch (e: any) {
+    return e.message;
+  }
+};
+
+/**
+ * Creates field name-label mapping list from given object
+ */
+const buildLabelList = (obj = {}): INameLabel[] => {
+  const list: INameLabel[] = [];
+  const fieldNames: string[] = Object.getOwnPropertyNames(obj);
+
+  for (const name of fieldNames) {
+    const field: any = obj[name];
+    const label: string = field && field.label ? field.label : "";
+
+    list.push({ name, label });
+  }
+
+  return list;
+};
+
+export const getSchemaLabels = (type: string, schemaMappings: ISchemaMap[]) => {
+  let fieldNames: INameLabel[] = [];
+
+  const found: ISchemaMap | undefined = schemaMappings.find(
+    m => m.name === type
+  );
+
+  if (found) {
+    const schemas: any = found.schemas || [];
+
+    for (const schema of schemas) {
+      // schema comes as either mongoose schema or plain object
+      const names: string[] = Object.getOwnPropertyNames(schema.obj || schema);
+
+      for (const name of names) {
+        const field: any = schema.obj ? schema.obj[name] : schema[name];
+
+        if (field && field.label) {
+          fieldNames.push({ name, label: field.label });
+        }
+
+        // no need to show _id field
+        if (field && !field.label && name !== '_id') {
+          fieldNames.push({ name, label: name });
+        }
+
+        // nested object field names
+        if (typeof field === "object" && field.type && field.type.obj) {
+          fieldNames = fieldNames.concat(buildLabelList(field.type.obj));
+        }
+      }
+    } // end schema for loop
+  } // end schema name mapping
+
+  return fieldNames;
+};
+
